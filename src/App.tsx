@@ -113,9 +113,9 @@ function TicTacToe() {
   const [board, setBoard] = useLocalStorage<string[]>('ldh.ttt.board', Array(9).fill(''));
   const [xIsNext, setXIsNext] = useLocalStorage<boolean>('ldh.ttt.turn', true);
 
-  const result = useMemo(() => calcWinner(board), [board]);
+  const result = useMemo<WinResult | null>(() => calcWinner(board), [board]);
   const winner = result?.mark ?? null;
-  const winLine: number[] = result?.line ?? ([] as number[]);
+  const winSet = useMemo(() => new Set(result?.line ?? []), [result]);
 
   function click(i: number) {
     if (board[i] || winner) return;
@@ -142,7 +142,7 @@ function TicTacToe() {
 
       <div className="grid grid-cols-3 gap-1 w-48">
         {board.map((v, i) => {
-          const isWinningSquare = winLine.includes(i);
+          const isWinningSquare = winSet.has(i);
           return (
             <button
               key={i}
@@ -178,7 +178,6 @@ function calcWinner(b: string[]): WinResult | null {
     [0, 4, 8],
     [2, 4, 6],
   ];
-
   for (const [a, c, d] of lines) {
     if (b[a] && b[a] === b[c] && b[a] === b[d]) {
       return { mark: b[a], line: [a, c, d] };
