@@ -28,16 +28,29 @@ function useAuth() {
   }, [])
 
   async function signIn(email: string) {
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } })
-    if (error) alert(error.message); else alert('Magic link sent! Check your email.')
+    const redirectTo = window.location.origin; // e.g., http://localhost:5173 or your Vercel domain
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo },
+    });
+    if (error) alert(error.message);
+    else alert('Magic link sent! Check your email.');
   }
   async function signOut() { await supabase.auth.signOut() }
 
   async function setDisplayName(name: string) {
-    if (!user) return
-    const { error } = await supabase.from('profiles').upsert({ id: user.id, display_name: name })
-    if (error) alert(error.message)
+  const { data: sess } = await supabase.auth.getSession();
+  const uid = sess.session?.user?.id;
+  if (!uid) {
+    alert('Please sign in first');
+    return;
   }
+  const { error } = await supabase
+    .from('profiles')
+    .upsert({ id: uid, display_name: name });
+
+  if (error) alert(error.message);
+}
 
   return { user, signIn, signOut, setDisplayName }
 }
