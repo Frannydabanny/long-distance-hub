@@ -1,5 +1,132 @@
 // The full MVP app. Uses localStorage for persistence. Swap with Supabase later.
 import React, { useEffect, useMemo, useState } from 'react'
+import { supabase } from './supabaseClient'
+
+type SessionUser = { id: string; email?: string | null; display_name?: string | null }
+
+function useAuth() {
+  const [user, setUser] = useState<SessionUser | null>(null)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      const u = data.session?.user
+      if (u) {
+        const prof = await supabase.from('profiles').select('display_name').eq('id', u.id).maybeSingle()
+        setUser({ id: u.id, email: u.email ?? null, display_name: prof.data?.display_name ?? null })
+      }
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_evt, session) => {
+      const u = session?.user
+      if (u) {
+        const prof = await supabase.from('profiles').select('display_name').eq('id', u.id).maybeSingle()
+        setUser({ id: u.id, email: u.email ?? null, display_name: prof.data?.display_name ?? null })
+      } else {
+        setUser(null)
+      }
+    })
+    return () => { sub.subscription.unsubscribe() }
+  }, [])
+
+  async function signIn(email: string) {
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } })
+    if (error) alert(error.message); else alert('Magic link sent! Check your email.')
+  }
+  async function signOut() { await supabase.auth.signOut() }
+
+  async function setDisplayName(name: string) {
+    if (!user) return
+    const { error } = await supabase.from('profiles').upsert({ id: user.id, display_name: name })
+    if (error) alert(error.message)
+  }
+
+  return { user, signIn, signOut, setDisplayName }
+}
+
+function IdentityPanel({
+  user, setDisplayName, roomId, setRoomId
+}:{
+  user: SessionUser | null,
+  setDisplayName: (n:string)=>Promise<void>|void,
+  roomId: string,
+  setRoomId: (s:string)=>void
+}) {
+  const [email, setEmail] = useState('')
+  const [name, setName]   = useState(user?.display_name ?? '')
+
+  async function joinRoom(e: React.FormEvent) {
+  e.preventDefault();
+  if (!user) return alert('Sign in first');
+
+  const id = roomId.trim();
+  if (!id) return;
+
+  // who am I?
+  const { data: sess } = await supabase.auth.getSession();
+  const uid = sess.session?.user?.id;
+  if (!uid) return alert('No user ID');
+
+  // ✅ create room if it doesn't exist
+  // (upsert avoids duplicate key errors)
+  const { error: roomErr } = await supabase
+    .from('couples')
+    .upsert({ room_id: id });
+
+  if (roomErr) {
+    alert('Could not create/join room: ' + roomErr.message);
+    return;
+  }
+
+  // ✅ add (or keep) membership for this user
+  const { error: memErr } = await supabase
+    .from('couple_members')
+    .upsert({ room_id: id, user_id: uid });
+
+  if (memErr) {
+    alert('Could not add member: ' + memErr.message);
+    return;
+  }
+
+  alert(`Joined room: ${id}`);
+}
+
+
+  return (
+    <Card title="Account & Room">
+      {!user ? (
+        <form onSubmit={(e)=>{e.preventDefault(); if(email) supabase.auth.signInWithOtp({ email, options:{ emailRedirectTo: window.location.origin } })}}>
+          <div className="grid gap-2 md:grid-cols-[1fr,auto]">
+            <input className="rounded border px-3 py-2"
+                   placeholder="Your email"
+                   value={email}
+                   onChange={e=>setEmail(e.target.value)} />
+            <button className="rounded bg-indigo-600 px-3 py-2 text-white">Send magic link</button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">We’ll email you a sign-in link. Do this for both of you.</p>
+        </form>
+      ) : (
+        <div className="grid gap-2">
+          <div className="text-sm">Signed in as <b>{user.email}</b></div>
+          <div className="flex gap-2">
+            <input className="rounded border px-3 py-2"
+                   placeholder="Display name"
+                   value={name}
+                   onChange={e=>setName(e.target.value)} />
+            <button className="rounded border px-3 py-2" onClick={()=>setDisplayName(name)}>Save</button>
+            <button className="rounded border px-3 py-2" onClick={()=>supabase.auth.signOut()}>Sign out</button>
+          </div>
+          <form onSubmit={joinRoom} className="flex gap-2">
+            <input className="rounded border px-3 py-2"
+                   placeholder="Room code (e.g., our-room)"
+                   value={roomId}
+                   onChange={e=>setRoomId(e.target.value)} />
+            <button className="rounded bg-green-600 px-3 py-2 text-white">Join / Create</button>
+          </form>
+          <p className="text-xs text-gray-500">Use the same room code for both of you. All tabs will sync in that room.</p>
+        </div>
+      )}
+    </Card>
+  )
+}
 
 type WinResult = { mark: string; line: number[] };
 
@@ -45,6 +172,8 @@ function Header(){
     </header>
   )
 }
+
+
 function Footer(){
   return (
     <footer className="border-t">
@@ -69,36 +198,80 @@ function Card({ title, children }: { title:string, children:React.ReactNode }){
 
 // HOME
 function Home(){
+  // ✅ Hooks must be inside a component:
+  const { user, signIn, signOut, setDisplayName } = useAuth()
+  const [roomId, setRoomId] = useLocalStorage<string>('ldh.room', '')
+
   const [ideas, setIdeas] = useLocalStorage<string[]>('ldh.ideas', [
     'Sunset photo scavenger hunt',
-    '30‑minute Duet Cook: pasta + salad',
+    '30-minute Duet Cook: pasta + salad',
     'Watch one short film in Spanish w/ subtitles',
   ])
   const [newIdea, setNewIdea] = useState('')
+
   return (
-    <section className="grid gap-6 md:grid-cols-3">
-      <Card title="This Week">
-        <ul className="space-y-2 text-sm">
-          <li>• Call mom on Sunday</li>
-          <li>• Plan November weekend trip</li>
-          <li>• 10 new vocab words each</li>
-        </ul>
-      </Card>
-      <Card title="Date Ideas">
-        <form onSubmit={(e)=>{e.preventDefault(); if(!newIdea.trim())return; setIdeas([newIdea.trim(), ...ideas]); setNewIdea('')}} className="flex gap-2">
-          <input className="flex-1 rounded border px-3 py-2" placeholder="Add an idea…" value={newIdea} onChange={(e)=>setNewIdea(e.target.value)} />
-          <button className="rounded bg-indigo-600 px-3 py-2 text-white">Add</button>
-        </form>
-        <ul className="mt-3 space-y-1 text-sm">
-          {ideas.map((it,i)=> (
-            <li key={i} className="flex items-start gap-2"><span className="mt-1">•</span><span className="flex-1">{it}</span>
-              <button onClick={()=>setIdeas(ideas.filter((_,idx)=>idx!==i))} className="text-gray-400 hover:text-red-600" aria-label="Remove">×</button>
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <Card title="Mini Checklist"><Checklist storageKey="ldh.checklist"/></Card>
-    </section>
+    <>
+      {/* Login + Room join panel */}
+      <IdentityPanel
+        user={user}
+        setDisplayName={setDisplayName}
+        roomId={roomId}
+        setRoomId={setRoomId}
+      />
+
+      {/* Your existing Home content */}
+      <section className="grid gap-6 md:grid-cols-3">
+        <Card title="This Week">
+          <ul className="space-y-2 text-sm">
+            <li>Call mom on Sunday</li>
+            <li>Plan November weekend trip</li>
+            <li>📝 10 new vocab words each</li>
+          </ul>
+        </Card>
+
+        <Card title="Date Ideas">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!newIdea.trim()) return
+              setIdeas([...ideas, newIdea.trim()])
+              setNewIdea('')
+            }}
+            className="flex gap-2"
+          >
+            <input
+              className="flex-1 rounded border px-3 py-2"
+              placeholder="Add an idea…"
+              value={newIdea}
+              onChange={(e) => setNewIdea(e.target.value)}
+            />
+            <button className="rounded bg-indigo-600 px-3 py-2 text-white">
+              Add
+            </button>
+          </form>
+
+          <ul className="mt-3 space-y-1 text-sm">
+            {ideas.map((it, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="mt-1">•</span>
+                <span className="flex-1">{it}</span>
+                <button
+                  onClick={() => setIdeas(ideas.filter((_, i) => i !== idx))}
+                  className="text-gray-400 hover:text-red-600"
+                  aria-label="Remove"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card title="Mini Checklist">
+          <Checklist storageKey="ldh.checklist" />
+        </Card>
+      </section>
+    </>
   )
 }
 
@@ -358,156 +531,100 @@ type WatchItem = {
 }
 
 function WatchList(){
-  const [items, setItems] = useLocalStorage<WatchItem[]>('ldh.watchlist', [])
+  const { user } = useAuth()
+  const [roomId] = useLocalStorage<string>('ldh.room','')
+  const [items, setItems] = useState<any[]>([])
   const [title, setTitle] = useState('')
   const [url, setUrl] = useState('')
   const [platform, setPlatform] = useState('')
   const [notes, setNotes] = useState('')
 
-  function addItem(e?: React.FormEvent){
-    if (e) e.preventDefault()
-    const t = title.trim()
-    if (!t) return
+  useEffect(()=> {
+    if (!roomId) return
+    supabase.from('watchlist')
+      .select('id,title,url,platform,notes,watched,created_by,created_at')
+      .eq('room_id', roomId)
+      .order('created_at', { ascending:false })
+      .then(async ({ data, error }) => {
+        if (!error && data) {
+          const ids = [...new Set(data.map(d=>d.created_by))]
+          const { data: profs } = await supabase.from('profiles').select('id,display_name').in('id', ids)
+          const nameById = new Map((profs??[]).map(p=>[p.id, p.display_name ?? '']))
+          setItems(data.map(d=> ({...d, name: nameById.get(d.created_by) || ''})))
+        }
+      })
+    const ch = supabase.channel(`watchlist:${roomId}`)
+      .on('postgres_changes', { event:'*', schema:'public', table:'watchlist', filter:`room_id=eq.${roomId}`},
+        async (_payload)=> {
+          const { data } = await supabase.from('watchlist')
+            .select('id,title,url,platform,notes,watched,created_by,created_at')
+            .eq('room_id', roomId)
+            .order('created_at', { ascending:false })
+          if (data) {
+            const ids = [...new Set(data.map(d=>d.created_by))]
+            const { data: profs } = await supabase.from('profiles').select('id,display_name').in('id', ids)
+            const nameById = new Map((profs??[]).map(p=>[p.id, p.display_name ?? '']))
+            setItems(data.map(d=> ({...d, name: nameById.get(d.created_by) || ''})))
+          }
+        }
+      ).subscribe()
+    return ()=> { supabase.removeChannel(ch) }
+  }, [roomId])
 
-    // simple local id—scoped to this component to avoid duplicates elsewhere
-    const newItem: WatchItem = {
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-      title: t,
-      url: url.trim() || undefined,
-      platform: platform.trim() || undefined,
-      notes: notes.trim() || undefined,
-      addedAt: new Date().toISOString(),
-      watched: false
-    }
-    setItems([newItem, ...items])
+  async function addItem(e?: React.FormEvent){
+    if (e) e.preventDefault()
+    if (!user) return alert('Sign in first'); if(!roomId) return alert('Join a room first')
+    const t = title.trim(); if (!t) return
+    const { error } = await supabase.from('watchlist').insert({
+      room_id: roomId, title: t, url: url.trim() || null, platform: platform.trim() || null,
+      notes: notes.trim() || null, created_by: user.id
+    })
+    if (error) alert(error.message)
     setTitle(''); setUrl(''); setPlatform(''); setNotes('')
   }
-
-  function toggleWatched(id: string){
-    setItems(items.map(it => it.id === id ? {...it, watched: !it.watched} : it))
+  async function toggleWatched(id:string, watched:boolean){
+    await supabase.from('watchlist').update({ watched }).eq('id', id)
+  }
+  async function removeItem(id:string){
+    await supabase.from('watchlist').delete().eq('id', id)
   }
 
-  function removeItem(id: string){
-    setItems(items.filter(it => it.id !== id))
-  }
-
-  // Unwatched first, then newest
-  const sorted = items.slice().sort((a,b) => {
-    if (a.watched !== b.watched) return a.watched ? 1 : -1
-    return b.addedAt.localeCompare(a.addedAt)
-  })
+  const sorted = items.slice().sort((a,b)=> (a.watched===b.watched) ? b.created_at.localeCompare(a.created_at) : (a.watched?1:-1))
 
   return (
     <div>
-      {/* Add form */}
       <form onSubmit={addItem} className="grid gap-2 md:grid-cols-4">
-        <input
-          className="rounded border px-3 py-2 md:col-span-2"
-          placeholder="Title (e.g., Spirited Away)"
-          value={title}
-          onChange={(e)=>setTitle(e.target.value)}
-        />
-        <input
-          className="rounded border px-3 py-2"
-          placeholder="Platform (Netflix, YouTube...)"
-          value={platform}
-          onChange={(e)=>setPlatform(e.target.value)}
-        />
-        <input
-          className="rounded border px-3 py-2"
-          placeholder="Link (trailer/YouTube/IMDb)"
-          value={url}
-          onChange={(e)=>setUrl(e.target.value)}
-        />
-        <textarea
-          className="rounded border px-3 py-2 md:col-span-3"
-          placeholder="Notes (why we want to watch it…)"
-          value={notes}
-          onChange={(e)=>setNotes(e.target.value)}
-        />
+        <input className="rounded border px-3 py-2 md:col-span-2" placeholder="Title" value={title} onChange={(e)=>setTitle(e.target.value)} />
+        <input className="rounded border px-3 py-2" placeholder="Platform" value={platform} onChange={(e)=>setPlatform(e.target.value)} />
+        <input className="rounded border px-3 py-2" placeholder="Link" value={url} onChange={(e)=>setUrl(e.target.value)} />
+        <textarea className="rounded border px-3 py-2 md:col-span-3" placeholder="Notes" value={notes} onChange={(e)=>setNotes(e.target.value)} />
         <div className="flex items-center">
-          <button className="rounded bg-indigo-600 px-3 py-2 text-white w-full">
-            Add to Watchlist
-          </button>
+          <button className="rounded bg-indigo-600 px-3 py-2 text-white w-full" disabled={!user || !roomId}>Add to Watchlist</button>
         </div>
       </form>
 
-      {/* List */}
       <ul className="mt-4 divide-y rounded-2xl border bg-white">
-        {sorted.length === 0 && (
-          <li className="p-4 text-sm text-gray-500">No items yet. Add your first movie or show!</li>
-        )}
-        {sorted.map((it) => (
+        {sorted.length===0 && <li className="p-4 text-sm text-gray-500">No items yet.</li>}
+        {sorted.map((it)=>(
           <li key={it.id} className="p-3 flex gap-3 items-start">
-            <input
-              type="checkbox"
-              checked={it.watched}
-              onChange={()=>toggleWatched(it.id)}
-              className="mt-1"
-              title="Mark as watched"
-            />
+            <input type="checkbox" checked={it.watched} onChange={(e)=>toggleWatched(it.id, e.target.checked)} className="mt-1" title="Mark as watched" />
             <div className="flex-1 min-w-0">
               <div className="font-medium break-words">
                 {it.title}
-                {it.platform && (
-                  <span className="ml-2 text-xs rounded-full border px-2 py-0.5 text-gray-600">
-                    {it.platform}
-                  </span>
-                )}
+                {it.platform && <span className="ml-2 text-xs rounded-full border px-2 py-0.5 text-gray-600">{it.platform}</span>}
               </div>
-              {it.url && (
-                <a
-                  className="text-sm text-indigo-600 underline break-all"
-                  href={it.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {it.url}
-                </a>
-              )}
+              <div className="text-xs text-gray-500">Added by {it.name || 'Anon'} • {new Date(it.created_at).toLocaleString()}</div>
+              {it.url && <a className="text-sm text-indigo-600 underline break-all" href={it.url} target="_blank" rel="noreferrer">{it.url}</a>}
               {it.notes && <div className="text-sm text-gray-600 mt-1 break-words">{it.notes}</div>}
-              <div className="text-xs text-gray-400 mt-1">
-                Added {new Date(it.addedAt).toLocaleString()}
-              </div>
             </div>
-            <button
-              onClick={()=>removeItem(it.id)}
-              className="text-sm text-red-600 hover:underline"
-            >
-              Remove
-            </button>
+            <button onClick={()=>removeItem(it.id)} className="text-sm text-red-600 hover:underline">Remove</button>
           </li>
         ))}
       </ul>
-
-      {/* Quick actions */}
-      {items.length > 0 && (
-        <div className="mt-3 flex gap-2">
-          <button
-            className="rounded border px-3 py-2 text-sm"
-            onClick={() => setItems(items.filter(i => !i.watched))}
-            title="Remove watched items"
-          >
-            Clear watched
-          </button>
-          <button
-            className="rounded border px-3 py-2 text-sm"
-            onClick={() => {
-              const onlyUnwatched = items.filter(i => !i.watched)
-              const onlyWatched = items.filter(i => i.watched)
-              setItems([
-                ...onlyUnwatched.sort((a,b)=>b.addedAt.localeCompare(a.addedAt)),
-                ...onlyWatched
-              ])
-            }}
-          >
-            Sort (unwatched first)
-          </button>
-        </div>
-      )}
     </div>
   )
 }
+
 
 
 // tiny id helper (reuse if you already have one)
@@ -577,20 +694,62 @@ function CookTogether(){
   )
 }
 
-// COMMUNITY (local stub)
 function Community(){
-  const [posts,setPosts]=useLocalStorage<{who:string;text:string}[]>('ldh.community',[{who:'You', text:'Drop your best long-distance tips here!'}])
-  const [who,setWho]=useState('Anon'); const [text,setText]=useState('')
+  const { user } = useAuth()   // already created above
+  const [roomId] = useLocalStorage<string>('ldh.room','')
+  const [posts, setPosts] = useState<Array<{id:string;text:string;created_by:string;created_at:string;name?:string}>>([])
+  const [text,setText]=useState('')
+
+  // load + realtime
+  useEffect(()=> {
+    if (!roomId) return
+    supabase.from('posts').select('id,text,created_by,created_at').eq('room_id', roomId).order('created_at', { ascending:false })
+      .then(async ({ data, error })=>{
+        if (!error && data) {
+          // join names
+          const ids = [...new Set(data.map(d=>d.created_by))]
+          const { data: profs } = await supabase.from('profiles').select('id,display_name').in('id', ids)
+          const nameById = new Map((profs??[]).map(p=>[p.id, p.display_name ?? '']))
+          setPosts(data.map(d=> ({...d, name: nameById.get(d.created_by) || ''})))
+        }
+      })
+    const ch = supabase.channel(`posts:${roomId}`)
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'posts', filter:`room_id=eq.${roomId}`},
+        async (payload)=> {
+          const p = payload.new as any
+          const { data: prof } = await supabase.from('profiles').select('display_name').eq('id', p.created_by).maybeSingle()
+          setPosts(prev => [{...p, name: prof?.display_name || ''}, ...prev])
+        }
+      ).subscribe()
+    return ()=> { supabase.removeChannel(ch) }
+  }, [roomId])
+
+  async function addPost(e:React.FormEvent){
+    e.preventDefault()
+    if (!user) return alert('Sign in first'); if(!roomId) return alert('Join a room first')
+    const t = text.trim(); if(!t) return
+    setText('')
+    const { error } = await supabase.from('posts').insert({ room_id: roomId, text: t, created_by: user.id })
+    if (error) alert(error.message)
+  }
+
   return (
     <section className="grid gap-6 md:grid-cols-2">
-      <Card title="Ideas Feed (Local Demo)">
-        <form onSubmit={(e)=>{e.preventDefault(); if(!text.trim())return; setPosts([{who: (who.trim()||'Anon'), text:text.trim()}, ...posts]); setText('')}} className="flex gap-2">
-          <input className="w-36 rounded border px-3 py-2" placeholder="Name" value={who} onChange={(e)=>setWho(e.target.value)} />
+      <Card title="Ideas Feed (Shared)">
+        <form onSubmit={addPost} className="flex gap-2">
+          <input className="w-36 rounded border px-3 py-2" disabled={!user} placeholder={user? (user.display_name || 'You') : 'Sign in first'} />
           <input className="flex-1 rounded border px-3 py-2" placeholder="Share an idea…" value={text} onChange={(e)=>setText(e.target.value)} />
-          <button className="rounded bg-indigo-600 px-3 py-2 text-white">Post</button>
+          <button className="rounded bg-indigo-600 px-3 py-2 text-white" disabled={!user || !roomId}>Post</button>
         </form>
-        <ul className="mt-3 space-y-3">{posts.map((p,i)=>(<li key={i} className="rounded-xl border p-3"><div className="text-xs text-gray-500">{p.who}</div><div className="text-sm">{p.text}</div></li>))}</ul>
-        <p className="mt-2 text-xs text-gray-500">(Later: real auth + moderated community.)</p>
+        <ul className="mt-3 space-y-3">
+          {posts.map((p)=>(
+            <li key={p.id} className="rounded-xl border p-3">
+              <div className="text-xs text-gray-500">{p.name || 'Anon'} • {new Date(p.created_at).toLocaleString()}</div>
+              <div className="text-sm">{p.text}</div>
+            </li>
+          ))}
+          {posts.length===0 && <li className="text-sm text-gray-500">No posts yet.</li>}
+        </ul>
       </Card>
       <Card title="Find Other Couples (Roadmap)">
         <ul className="list-disc pl-5 text-sm space-y-2">
