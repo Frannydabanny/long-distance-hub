@@ -115,7 +115,7 @@ function TicTacToe() {
 
   const result = useMemo(() => calcWinner(board), [board]);
   const winner = result?.mark ?? null;
-  const winLine = result?.line ?? [];
+  const winLine: number[] = result?.line ?? ([] as number[]);
 
   function click(i: number) {
     if (board[i] || winner) return;
@@ -165,8 +165,10 @@ function TicTacToe() {
     </div>
   );
 }
-function calcWinner(b: string[]) {
-  const lines = [
+type WinResult = { mark: string; line: number[] };
+
+function calcWinner(b: string[]): WinResult | null {
+  const lines: number[][] = [
     [0, 1, 2],
     [3, 4, 5],
     [6, 7, 8],
@@ -175,13 +177,11 @@ function calcWinner(b: string[]) {
     [2, 5, 8],
     [0, 4, 8],
     [2, 4, 6],
-  ] as const;
+  ];
 
-  for (const line of lines) {
-    const [a, c, d] = line;
+  for (const [a, c, d] of lines) {
     if (b[a] && b[a] === b[c] && b[a] === b[d]) {
-      // return both the winner mark and the winning indices
-      return { mark: b[a], line };
+      return { mark: b[a], line: [a, c, d] };
     }
   }
   return null;
