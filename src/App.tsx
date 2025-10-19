@@ -253,32 +253,266 @@ function Flashcards({cards}:{cards:{front:string;back:string}[]}){
 }
 
 // WATCH TOGETHER
+
+// WATCH TOGETHER
 function WatchTogether(){
-  const [url, setUrl] = useLocalStorage<string>('ldh.watch.url','https://www.youtube.com/watch?v=dQw4w9WgXcQ')
-  const [t, setT] = useLocalStorage<number>('ldh.watch.t',0)
-  const shareLink = useMemo(()=>{ try{ const u=new URL(url); if(t>0) u.searchParams.set('t', String(t)); return u.toString()} catch{ return url } },[url,t])
+  const [url, setUrl] = useLocalStorage<string>('ldh.watch.url','https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  const [t, setT] = useLocalStorage<number>('ldh.watch.t', 0);
+
+  // User-facing share link (adds ?t=seconds if provided)
+  const shareLink = useMemo(() => {
+    try {
+      const u = new URL(url);
+      if (t > 0) u.searchParams.set('t', String(t));
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }, [url, t]);
+
+  // Robust YouTube embed src (handles youtube.com/watch?v=... and youtu.be/...)
+  const embedSrc = useMemo(() => {
+    try {
+      const u = new URL(url.trim());
+      let id: string | null = null;
+
+      if (u.hostname.includes('youtu.be')) {
+        // https://youtu.be/<id>
+        id = u.pathname.replace('/', '') || null;
+      } else if (u.hostname.includes('youtube.com')) {
+        // https://www.youtube.com/watch?v=<id> or /shorts/<id>
+        id = u.searchParams.get('v');
+        if (!id && u.pathname.startsWith('/shorts/')) {
+          id = u.pathname.split('/')[2] || null;
+        }
+      }
+
+      if (!id) return '';
+      const start = t > 0 ? `&start=${t}` : '';
+      return `https://www.youtube.com/embed/${id}?rel=0${start}`;
+    } catch {
+      return '';
+    }
+  }, [url, t]);
+
   return (
     <section className="grid gap-6 md:grid-cols-2">
       <Card title="Video URL">
         <div className="flex gap-2">
-          <input className="flex-1 rounded border px-3 py-2" value={url} onChange={(e)=>setUrl(e.target.value)} />
-          <input className="w-28 rounded border px-3 py-2" type="number" min={0} value={t} onChange={(e)=>setT(Number(e.target.value))} placeholder="t (sec)" />
+          <input
+            className="flex-1 rounded border px-3 py-2"
+            value={url}
+            onChange={(e)=>setUrl(e.target.value)}
+          />
+          <input
+            className="w-28 rounded border px-3 py-2"
+            type="number"
+            min={0}
+            value={t}
+            onChange={(e)=>setT(Number(e.target.value))}
+            placeholder="t (sec)"
+          />
         </div>
-        <p className="mt-2 text-sm text-gray-600">Share this link with your partner to start at the same time:</p>
-        <div className="mt-1 text-xs break-all rounded border bg-gray-50 p-2">{shareLink}</div>
-        <p className="mt-2 text-xs text-gray-500">(Later: real-time sync via WebRTC + a room code.)</p>
+
+        <p className="mt-2 text-sm text-gray-600">
+          Share this link with your partner to start at the same time:
+        </p>
+        <p className="mt-1 text-xs break-all rounded border bg-gray-50 p-2">
+          {shareLink}
+        </p>
+        <p className="mt-2 text-xs text-gray-500">
+          (Later: real-time sync via WebRTC + a room code.)
+        </p>
       </Card>
+
       <Card title="Inline Player (YouTube embed)">
         <div className="aspect-video overflow-hidden rounded-2xl border bg-black">
-          <iframe className="h-full w-full" src={toEmbed(url,t)} title="YouTube video player" allow="autoplay; encrypted-media" allowFullScreen />
+          <iframe
+            className="h-full w-full"
+            src={embedSrc}
+            title="YouTube video player"
+            allow="autoplay; encrypted-media"
+            allowFullScreen
+          />
         </div>
       </Card>
+
+      {/* Full-width watchlist card */}
+      <div className="md:col-span-2">
+        <Card title="Our Watchlist">
+          <WatchList />
+        </Card>
+      </div>
     </section>
   )
 }
-function toEmbed(u:string,t:number){
-  try{ const url=new URL(u); const id=url.searchParams.get('v'); const start=t>0? `&start=${t}`:''; return `https://www.youtube.com/embed/${id}?rel=0${start}` } catch { return '' }
+
+type WatchItem = {
+  id: string
+  title: string
+  url?: string
+  notes?: string
+  addedAt: string
+  watched: boolean
+  platform?: string   // e.g., Netflix, Prime, YouTube
 }
+
+function WatchList(){
+  const [items, setItems] = useLocalStorage<WatchItem[]>('ldh.watchlist', [])
+  const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
+  const [platform, setPlatform] = useState('')
+  const [notes, setNotes] = useState('')
+
+  function addItem(e?: React.FormEvent){
+    if (e) e.preventDefault()
+    const t = title.trim()
+    if (!t) return
+
+    // simple local id—scoped to this component to avoid duplicates elsewhere
+    const newItem: WatchItem = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+      title: t,
+      url: url.trim() || undefined,
+      platform: platform.trim() || undefined,
+      notes: notes.trim() || undefined,
+      addedAt: new Date().toISOString(),
+      watched: false
+    }
+    setItems([newItem, ...items])
+    setTitle(''); setUrl(''); setPlatform(''); setNotes('')
+  }
+
+  function toggleWatched(id: string){
+    setItems(items.map(it => it.id === id ? {...it, watched: !it.watched} : it))
+  }
+
+  function removeItem(id: string){
+    setItems(items.filter(it => it.id !== id))
+  }
+
+  // Unwatched first, then newest
+  const sorted = items.slice().sort((a,b) => {
+    if (a.watched !== b.watched) return a.watched ? 1 : -1
+    return b.addedAt.localeCompare(a.addedAt)
+  })
+
+  return (
+    <div>
+      {/* Add form */}
+      <form onSubmit={addItem} className="grid gap-2 md:grid-cols-4">
+        <input
+          className="rounded border px-3 py-2 md:col-span-2"
+          placeholder="Title (e.g., Spirited Away)"
+          value={title}
+          onChange={(e)=>setTitle(e.target.value)}
+        />
+        <input
+          className="rounded border px-3 py-2"
+          placeholder="Platform (Netflix, YouTube...)"
+          value={platform}
+          onChange={(e)=>setPlatform(e.target.value)}
+        />
+        <input
+          className="rounded border px-3 py-2"
+          placeholder="Link (trailer/YouTube/IMDb)"
+          value={url}
+          onChange={(e)=>setUrl(e.target.value)}
+        />
+        <textarea
+          className="rounded border px-3 py-2 md:col-span-3"
+          placeholder="Notes (why we want to watch it…)"
+          value={notes}
+          onChange={(e)=>setNotes(e.target.value)}
+        />
+        <div className="flex items-center">
+          <button className="rounded bg-indigo-600 px-3 py-2 text-white w-full">
+            Add to Watchlist
+          </button>
+        </div>
+      </form>
+
+      {/* List */}
+      <ul className="mt-4 divide-y rounded-2xl border bg-white">
+        {sorted.length === 0 && (
+          <li className="p-4 text-sm text-gray-500">No items yet. Add your first movie or show!</li>
+        )}
+        {sorted.map((it) => (
+          <li key={it.id} className="p-3 flex gap-3 items-start">
+            <input
+              type="checkbox"
+              checked={it.watched}
+              onChange={()=>toggleWatched(it.id)}
+              className="mt-1"
+              title="Mark as watched"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium break-words">
+                {it.title}
+                {it.platform && (
+                  <span className="ml-2 text-xs rounded-full border px-2 py-0.5 text-gray-600">
+                    {it.platform}
+                  </span>
+                )}
+              </div>
+              {it.url && (
+                <a
+                  className="text-sm text-indigo-600 underline break-all"
+                  href={it.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {it.url}
+                </a>
+              )}
+              {it.notes && <div className="text-sm text-gray-600 mt-1 break-words">{it.notes}</div>}
+              <div className="text-xs text-gray-400 mt-1">
+                Added {new Date(it.addedAt).toLocaleString()}
+              </div>
+            </div>
+            <button
+              onClick={()=>removeItem(it.id)}
+              className="text-sm text-red-600 hover:underline"
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {/* Quick actions */}
+      {items.length > 0 && (
+        <div className="mt-3 flex gap-2">
+          <button
+            className="rounded border px-3 py-2 text-sm"
+            onClick={() => setItems(items.filter(i => !i.watched))}
+            title="Remove watched items"
+          >
+            Clear watched
+          </button>
+          <button
+            className="rounded border px-3 py-2 text-sm"
+            onClick={() => {
+              const onlyUnwatched = items.filter(i => !i.watched)
+              const onlyWatched = items.filter(i => i.watched)
+              setItems([
+                ...onlyUnwatched.sort((a,b)=>b.addedAt.localeCompare(a.addedAt)),
+                ...onlyWatched
+              ])
+            }}
+          >
+            Sort (unwatched first)
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// tiny id helper (reuse if you already have one)
+function cryptoId(){ return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) }
+
 
 // CALENDAR
 function SharedCalendar(){
