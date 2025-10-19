@@ -1,6 +1,8 @@
 // The full MVP app. Uses localStorage for persistence. Swap with Supabase later.
 import React, { useEffect, useMemo, useState } from 'react'
 
+type WinResult = { mark: string; line: number[] };
+
 export default function LongDistanceHub() {
   const [tab, setTab] = useState<'home'|'games'|'learn'|'watch'|'calendar'|'cook'|'community'|'settings'>('home')
   return (
@@ -109,6 +111,26 @@ function Games(){
     </section>
   )
 }
+
+function calcWinner(b: string[]): WinResult | null {
+  const lines: number[][] = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8],
+    [2, 4, 6],
+  ];
+  for (const [a, c, d] of lines) {
+    if (b[a] && b[a] === b[c] && b[a] === b[d]) {
+      return { mark: b[a], line: [a, c, d] };
+    }
+  }
+  return null;
+}
+
 function TicTacToe() {
   const [board, setBoard] = useLocalStorage<string[]>(
     'ldh.ttt.board',
@@ -172,26 +194,7 @@ function TicTacToe() {
     </div>
   );
 }
-type WinResult = { mark: string; line: number[] };
 
-function calcWinner(b: string[]): WinResult | null {
-  const lines: number[][] = [
-    [0, 1, 2],
-    [3, 4, 5],
-    [6, 7, 8],
-    [0, 3, 6],
-    [1, 4, 7],
-    [2, 5, 8],
-    [0, 4, 8],
-    [2, 4, 6],
-  ];
-  for (const [a, c, d] of lines) {
-    if (b[a] && b[a] === b[c] && b[a] === b[d]) {
-      return { mark: b[a], line: [a, c, d] };
-    }
-  }
-  return null;
-}
 function PromptPingPong(){
   const [prompts, setPrompts] = useLocalStorage<string[]>('ldh.prompts', [
     'Share a favorite childhood memory.',
