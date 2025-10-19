@@ -110,12 +110,21 @@ function Games(){
   )
 }
 function TicTacToe() {
-  const [board, setBoard] = useLocalStorage<string[]>('ldh.ttt.board', Array(9).fill(''));
+  const [board, setBoard] = useLocalStorage<string[]>(
+    'ldh.ttt.board',
+    Array<string>(9).fill('')
+  );
   const [xIsNext, setXIsNext] = useLocalStorage<boolean>('ldh.ttt.turn', true);
 
+  // fully typed result
   const result = useMemo<WinResult | null>(() => calcWinner(board), [board]);
   const winner = result?.mark ?? null;
-  const winSet = useMemo(() => new Set(result?.line ?? []), [result]);
+
+  // use a Set to check membership; always a Set<number>
+  const winSet = useMemo<Set<number>>(
+    () => new Set<number>(result?.line ?? []),
+    [result]
+  );
 
   function click(i: number) {
     if (board[i] || winner) return;
@@ -126,7 +135,7 @@ function TicTacToe() {
   }
 
   function reset() {
-    setBoard(Array(9).fill(''));
+    setBoard(Array<string>(9).fill(''));
     setXIsNext(true);
   }
 
@@ -147,10 +156,8 @@ function TicTacToe() {
             <button
               key={i}
               onClick={() => click(i)}
-              className={
-                `aspect-square rounded border text-2xl font-bold flex items-center justify-center
-                 hover:bg-gray-50 ` + (isWinningSquare ? 'bg-green-300' : 'bg-white')
-              }
+              className={`aspect-square rounded border text-2xl font-bold flex items-center justify-center
+                hover:bg-gray-50 ${isWinningSquare ? 'bg-green-300' : 'bg-white'}`}
             >
               {v}
             </button>
